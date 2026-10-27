@@ -18,3 +18,12 @@ run("saveEmployee({name:'新员工',role:'测试',parentId:''},null)");assert.eq
 run("saveDepartment({dept:'测试部',name:'测试指挥',duties:'测试职责'},null)");assert.equal(run('managers.at(-1).dept'),'测试部');
 run("home()");assert(!el('#content').innerHTML.includes('总指挥简报'));assert.equal(el('#crumb').innerHTML,'<span aria-current="page">总指挥</span>');
 console.log('PASS: breadcrumb ancestry, department CRUD, employee CRUD, transfers, running-task cancellation, deleted employee provenance and removal of briefing.');
+
+run("saveDepartment({dept:'研发部',name:'研发负责人',duties:'研发',role:'研发主管',level:'5'},managers[0].id)");
+assert.equal(run('managers[0].role'),'研发主管');assert.equal(run('managers[0].level'),5);
+run('accountApply(accountSnapshot());department(managers[0].id)');
+assert(el('#content').innerHTML.includes('研发主管'));assert(!el('#content').innerHTML.includes('← 所有部门'));
+run('settings()');assert(el('#content').innerHTML.includes('L5 研发主管'));assert(!el('#content').innerHTML.includes('配置 →'));
+run('managerPanel(managers[0].id)');assert(el('#content').innerHTML.includes('L5 研发主管'));
+run("saveDepartment({dept:'研发部',name:'研发负责人',role:'bad',level:'0'},managers[0].id)");assert.equal(run('managers[0].level'),5);assert.equal(run('managers[0].role'),'研发主管');
+console.log('PASS: configurable title and level survive account reload, consistent labels, invalid level rejected.');
