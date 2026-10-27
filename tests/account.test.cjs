@@ -1,0 +1,25 @@
+const vm=require('vm'),fs=require('fs'),assert=require('assert');
+const storage=new Map(),timers=[],elements=new Map(),rows=new Map();let rpcCalls=0,failSave=false,delaySave=null;
+const element=()=>({innerHTML:'',textContent:'',hidden:false,style:{},classList:{add(){},remove(){},toggle(){},contains(){return false}},focus(){},querySelector(){return element()}});
+const el=s=>{if(!elements.has(s))elements.set(s,element());return elements.get(s)};
+let ctx;const client={auth:{onAuthStateChange(){},async getSession(){return {data:{session:null}}},async signOut(){return {}}},from(){return {select(){return {eq(_,id){return {async maybeSingle(){return {data:rows.get(id)||null}}}}}}}},async rpc(name,args){rpcCalls++;if(delaySave)await delaySave;if(failSave)return {error:{message:'network'}};const uid=vm.runInContext('accountUser.id',ctx),row=rows.get(uid);if((row?.revision||0)!==args.expected_revision)return {error:{message:'WORKSPACE_CONFLICT'}};const revision=args.expected_revision+1;rows.set(uid,{revision,payload:JSON.parse(JSON.stringify(args.new_payload))});return {data:revision}}};
+ctx=vm.createContext({console,crypto:require('crypto').webcrypto,localStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},document:{querySelector:el,getElementById:id=>el('#'+id),addEventListener(){},activeElement:element()},window:{supabase:{createClient:()=>client},addEventListener(){}},location:{origin:'https://example.com'},setTimeout:f=>(timers.push(f),timers.length),clearTimeout(){},FormData:class{constructor(o){this.o=o}get(k){return this.o[k]}}});
+vm.runInContext(fs.readFileSync('dist/app.js','utf8'),ctx);vm.runInContext(fs.readFileSync('dist/account.js','utf8'),ctx);const run=s=>vm.runInContext(s,ctx);
+(async()=>{
+await new Promise(r=>setImmediate(r));assert.equal(run('accountUser'),null);assert.equal(el('.shell').hidden,true);
+await run("loadAccount({id:'alice',email:'a@example.com'})");assert.equal(run('projects.length'),0);assert.equal(run('accountReady'),true);
+run("projects.push({id:44,name:'Alice only',desc:'',readme:'test',tasks:[],version:1});saveState()");await run('accountFlush()');assert.equal(rows.get('alice').payload.projects[0].name,'Alice only');const count=rpcCalls;await run('accountFlush()');assert.equal(rpcCalls,count);assert.equal(run('accountFlight'),null);
+run("writeHistory(44,[{id:'c1',snapshot:{tasks:[]}}])");await run('accountFlush()');assert.equal(rows.get('alice').payload.histories['44'][0].id,'c1');
+await run("loadAccount({id:'bob',email:'b@example.com'})");assert.equal(run('projects.length'),0);assert.equal(run('readHistory(44).length'),0);assert.equal(run('accountUser.id'),'bob');
+run("projects.push({id:55,name:'Bob only',desc:'',readme:'',tasks:[],version:1});saveState()");failSave=true;assert.equal(await run('accountFlush()'),false);assert.equal(run('accountDirty'),true);assert.equal(rows.get('bob').payload.projects.length,0);assert.equal(JSON.parse(storage.get('linghang-account-cache-v1:bob')).dirty,true);failSave=false;await run('accountFlush()');assert.equal(rows.get('bob').payload.projects[0].name,'Bob only');
+rows.get('bob').revision++;run("projects[0].name='safe local';saveState()");assert.equal(await run('accountFlush()'),true);assert.equal(rows.get('bob').payload.projects[0].name,'safe local');
+// A lost response: the server has already accepted exactly this local payload.
+run("projects[0].name='already saved';saveState()");rows.get('bob').revision++;rows.get('bob').payload=JSON.parse(run('JSON.stringify(accountSnapshot())'));const callsBefore=rpcCalls;assert.equal(await run('accountFlush()'),true);assert.equal(run('accountDirty'),false);assert.equal(rpcCalls,callsBefore+1);
+// Derived presentation fields must not enqueue another write on render.
+run("agents[0].status='presentation only';saveState()");assert.equal(run('accountDirty'),false);
+// Distinct edits still require an explicit choice.
+rows.get('bob').revision++;rows.get('bob').payload.projects[0].name='Bob remote';run("projects[0].name='local pending';saveState()");assert.equal(await run('accountFlush()'),false);assert.equal(run('accountConflict'),true);assert.equal(rows.get('bob').payload.projects[0].name,'Bob remote');const base=run('accountRevision');await run("loadAccount({id:'bob',email:'b@example.com'},true)");assert.equal(run('accountConflict'),true);assert.equal(run('accountRevision'),base);assert.equal(JSON.parse(storage.get('linghang-account-cache-v1:bob')).revision,base);
+await run('accountLogout()');assert.equal(run('accountUser.id'),'bob'); // Unsynced data blocks accidental logout.
+await run("loadAccount({id:'alice',email:'a@example.com'})");assert.equal(run('projects[0].name'),'Alice only');assert.equal(run('readHistory(44).length'),1);
+console.log('PASS: login gate, account isolation, cloud state and backup sync, no-op saves, network failure retention, revision conflict persistence, logout protection, account reload.');
+})().catch(e=>{console.error(e);process.exitCode=1});
