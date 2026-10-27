@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "description": "中文 AI 指挥工作台，含 Supabase 邮箱密码登录和账号存储",
   "scripts": {
-    "check": "node --check dist/app.js && node --check dist/account.js",
-    "test": "node tests/account.test.cjs",
+    "check": "node --check dist/app.js && node --check dist/team.js && node --check dist/account.js",
+    "test": "node tests/account.test.cjs && node tests/team.test.cjs",
     "start": "python3 -m http.server 8765 --directory dist"
   }
 }
